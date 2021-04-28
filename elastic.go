@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"time"
@@ -14,7 +15,7 @@ type Elastic struct {
 	es *elasticsearch.Client
 }
 
-func NewElastic(hosts []string, maxRetries int) (*Elastic, error) {
+func NewElastic(hosts []string, maxRetries int, pauseBetweenRetry time.Duration) (*Elastic, error) {
 	es, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses:            hosts,
 		EnableRetryOnTimeout: true,
@@ -24,7 +25,8 @@ func NewElastic(hosts []string, maxRetries int) (*Elastic, error) {
 			if i == maxRetries {
 				log.Fatalln("max retries have been reached")
 			}
-			return time.Second
+			fmt.Println("retry: ", i)
+			return pauseBetweenRetry
 		},
 	})
 	if err != nil {
@@ -34,14 +36,12 @@ func NewElastic(hosts []string, maxRetries int) (*Elastic, error) {
 }
 
 type BulkIndexer struct {
-	es    *elasticsearch.Client
-	bulk  esutil.BulkIndexer
-	index string
+	es   *elasticsearch.Client
+	bulk esutil.BulkIndexer
 }
 
-func (e *Elastic) NewBulkIndexer(index string) (*BulkIndexer, error) {
+func (e *Elastic) NewBulkIndexer() (*BulkIndexer, error) {
 	bulk, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
-		Index:        index,
 		Client:       e.es,
 		DocumentType: "_doc",
 		// NumWorkers:    2,               // default: NumCPUs
@@ -54,7 +54,7 @@ func (e *Elastic) NewBulkIndexer(index string) (*BulkIndexer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BulkIndexer{es: e.es, bulk: bulk, index: index}, nil
+	return &BulkIndexer{es: e.es, bulk: bulk}, nil
 }
 
 func (b *BulkIndexer) Close() error {
@@ -74,11 +74,12 @@ func (t *task) Read(p []byte) (n int, err error) {
 	return t.r.Read(p)
 }
 
-func (b *BulkIndexer) Index(itm interface{}, onSuccess func()) error {
+func (b *BulkIndexer) Index(index string, itm interface{}, onSuccess func()) error {
 	t := task{r: esutil.NewJSONReader(itm), sf: onSuccess}
 	return b.bulk.Add(
 		context.Background(),
 		esutil.BulkIndexerItem{
+			Index:  index,
 			Action: "index",
 			Body:   &t,
 			OnSuccess: func(c context.Context, bii esutil.BulkIndexerItem, biri esutil.BulkIndexerResponseItem) {
@@ -86,6 +87,9 @@ func (b *BulkIndexer) Index(itm interface{}, onSuccess func()) error {
 				if t.sf != nil {
 					t.sf()
 				}
+			},
+			OnFailure: func(c context.Context, bii esutil.BulkIndexerItem, biri esutil.BulkIndexerResponseItem, e error) {
+				log.Fatalln("elastic: ", biri.Error)
 			},
 		},
 	)

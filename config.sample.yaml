@@ -1,0 +1,15 @@
+rabbit:
+  dsn: amqp://user:password@localhost:5672/
+  queue: test
+  prefetch: 1000
+  name: go-client
+
+elastic:
+  hosts:
+    - http://127.0.0.1:9200
+  maxRetries: 10
+  pauseBetweenRetry: "1s"
+
+# the route key is taken from 'type' header of every rabbit message
+route:
+  log: log-ilm-current
