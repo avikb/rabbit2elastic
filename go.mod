@@ -1,4 +1,4 @@
-module rab2el
+module github.com/avikb/rabbit2elastic
 
 go 1.16
 
